@@ -1,0 +1,7 @@
+{
+  "name": "Fiber Track",
+  "description": "A field data collection tool for fiber installations with map pinning, WhatsApp parsing, and dashboard analytics.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "short_name": "FiberTrack",
+  "name": "Fiber Installation Tracker",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/6863/6863372.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/6863/6863372.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#4f46e5",
+  "background_color": "#f8fafc",
+  "orientation": "portrait"
+}

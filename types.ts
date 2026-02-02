@@ -1,6 +1,16 @@
+
 export type JobStatus = 'Forwarded' | 'Pending' | 'Installed' | 'Rejected' | 'Lead' | '';
 export type FiberReady = 'Yes' | 'No' | '';
 export type UserRole = 'dsr' | 'supervisor';
+
+// Hardcoded Team List
+export const VALID_TEAMS = [
+  "Julia",
+  "BigTex",
+  "Straton",
+  "SkyReighn",
+  "HQ"
+];
 
 export interface UserProfile {
   uid: string;
@@ -55,6 +65,7 @@ export interface Announcement {
   content: string;
   createdAt: string;
   createdBy: string;
+  team: string; // Added team scope
 }
 
 export interface DirectMessage {

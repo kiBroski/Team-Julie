@@ -1,7 +1,7 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { InstallationRecord, JobStatus, Announcement, DirectMessage, UserProfile } from '../types';
 import { db } from '../firebase';
-import { Edit2, Trash2, Search, Download, RefreshCw, Megaphone, Bell, Check, X, Reply, Send } from 'lucide-react';
+import { Edit2, Trash2, Search, Download, RefreshCw, Megaphone, Bell, Check, X, Reply, Send, UserCog } from 'lucide-react';
 
 interface DashboardProps {
   records: InstallationRecord[];
@@ -22,15 +22,25 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
   // Messaging State
   const [replyTarget, setReplyTarget] = useState<DirectMessage | null>(null);
   const [replyText, setReplyText] = useState('');
+  
+  // New Message to Supervisor State
+  const [supervisor, setSupervisor] = useState<UserProfile | null>(null);
+  const [isMessagingSupervisor, setIsMessagingSupervisor] = useState(false);
+  const [supervisorMsgText, setSupervisorMsgText] = useState('');
 
   useEffect(() => {
+    if (!currentUser?.team) return;
+
     // 1. Listen for announcements
+    // FIX: Filter by team to match Security Rules and remove orderBy to prevent index errors
     const unsubAnnounce = db.collection('announcements')
-      .orderBy('createdAt', 'desc')
-      .limit(1)
+      .where('team', '==', currentUser.team)
       .onSnapshot(snap => {
-        setAnnouncements(snap.docs.map(d => ({id: d.id, ...d.data()} as Announcement)));
-      });
+        const data = snap.docs.map(d => ({id: d.id, ...d.data()} as Announcement));
+        // Sort client-side
+        data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setAnnouncements(data.slice(0, 1)); // Take the latest one
+      }, err => console.log("Announce error", err));
 
     // 2. Listen for Private Messages (Unread or recent)
     let unsubMsg = () => {};
@@ -41,10 +51,24 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
         .limit(5)
         .onSnapshot(snap => {
           setMessages(snap.docs.map(d => ({id: d.id, ...d.data()} as DirectMessage)));
-        });
+        }, err => console.log("Msg error", err));
     }
 
-    return () => { unsubAnnounce(); unsubMsg(); };
+    // 3. Find My Supervisor
+    let unsubSuper = () => {};
+    if (currentUser?.team) {
+       unsubSuper = db.collection('users')
+         .where('team', '==', currentUser.team)
+         .where('role', '==', 'supervisor')
+         .limit(1)
+         .onSnapshot(snap => {
+           if (!snap.empty) {
+             setSupervisor(snap.docs[0].data() as UserProfile);
+           }
+         }, err => console.log("Supervisor lookup error", err));
+    }
+
+    return () => { unsubAnnounce(); unsubMsg(); unsubSuper(); };
   }, [currentUser]);
 
   const markMessageRead = async (id: string) => {
@@ -79,6 +103,27 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
       alert("Failed to send reply.");
     }
   };
+
+  const handleSendToSupervisor = async () => {
+    if (!supervisor || !currentUser || !supervisorMsgText.trim()) return;
+
+    try {
+      await db.collection('messages').add({
+        recipientUid: supervisor.uid,
+        senderUid: currentUser.uid,
+        senderName: currentUser.displayName,
+        content: supervisorMsgText,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+      setIsMessagingSupervisor(false);
+      setSupervisorMsgText('');
+      alert("Message sent to Supervisor.");
+    } catch (e) {
+      console.error("Error sending to supervisor", e);
+      alert("Failed to send.");
+    }
+  }
 
   const stats = useMemo(() => {
     return {
@@ -154,6 +199,18 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
             <p className="text-amber-800 text-sm mt-1">{announcements[0].content}</p>
             <p className="text-xs text-amber-600/70 mt-1">{new Date(announcements[0].createdAt).toLocaleDateString()}</p>
           </div>
+        </div>
+      )}
+
+      {/* Contact Supervisor Button */}
+      {supervisor && (
+        <div className="flex justify-end">
+            <button 
+                onClick={() => setIsMessagingSupervisor(true)}
+                className="text-xs text-indigo-600 font-bold bg-indigo-50 px-3 py-2 rounded-lg hover:bg-indigo-100 flex items-center gap-2"
+            >
+                <UserCog size={16} /> Contact Supervisor ({supervisor.displayName})
+            </button>
         </div>
       )}
 
@@ -245,29 +302,40 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
       </div>
 
       {/* Reply Modal */}
-      {replyTarget && (
+      {(replyTarget || isMessagingSupervisor) && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl animate-fade-in">
             <div className="bg-indigo-900 text-white p-4 rounded-t-xl flex justify-between items-center">
-              <h3 className="font-bold">Reply to {replyTarget.senderName}</h3>
-              <button onClick={() => setReplyTarget(null)} className="text-indigo-200 hover:text-white"><X size={20}/></button>
+              <h3 className="font-bold">
+                  {replyTarget ? `Reply to ${replyTarget.senderName}` : `Message ${supervisor?.displayName}`}
+              </h3>
+              <button 
+                  onClick={() => {
+                      setReplyTarget(null);
+                      setIsMessagingSupervisor(false);
+                  }} 
+                  className="text-indigo-200 hover:text-white"
+              >
+                  <X size={20}/>
+              </button>
             </div>
             <div className="p-4 space-y-4">
-              <div className="bg-gray-50 p-3 rounded-lg text-xs text-gray-500 italic border border-gray-100">
-                "{replyTarget.content}"
-              </div>
+              {replyTarget && (
+                  <div className="bg-gray-50 p-3 rounded-lg text-xs text-gray-500 italic border border-gray-100">
+                    "{replyTarget.content}"
+                  </div>
+              )}
               <textarea 
                 className="w-full h-32 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                placeholder="Type your reply here..."
-                value={replyText}
-                onChange={e => setReplyText(e.target.value)}
+                placeholder={replyTarget ? "Type your reply..." : "Type message to supervisor..."}
+                value={replyTarget ? replyText : supervisorMsgText}
+                onChange={e => replyTarget ? setReplyText(e.target.value) : setSupervisorMsgText(e.target.value)}
               />
               <button 
-                onClick={handleSendReply}
-                disabled={!replyText.trim()}
-                className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700 flex items-center justify-center gap-2 disabled:opacity-50"
+                onClick={replyTarget ? handleSendReply : handleSendToSupervisor}
+                className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"
               >
-                <Send size={18} /> Send Reply
+                <Send size={18} /> Send
               </button>
             </div>
           </div>

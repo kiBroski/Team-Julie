@@ -1,51 +1,59 @@
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
     // --- Helper Functions ---
+    
     function isSignedIn() {
       return request.auth != null;
     }
     
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function getUserProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     
-    // Safe Supervisor Check
     function isSupervisor() {
-      return isSignedIn() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'supervisor';
+      return isSignedIn() && getUserProfile().role == 'supervisor';
+    }
+
+    // NEW: Check if user is part of HQ team
+    function isHQ() {
+      return isSignedIn() && getUserProfile().team == 'HQ';
     }
 
     // --- Users Collection ---
     match /users/{userId} {
-      allow read: if isOwner(userId) || isSupervisor();
-      // Allow supervisors to create/manage other users (e.g. for seeding or management)
-      allow create: if isOwner(userId) || isSupervisor();
-      allow update: if isOwner(userId) || isSupervisor();
+      // Relaxed Read: Authenticated users can read profiles (Needed for dashboard lists)
+      allow read: if isSignedIn();
+      
+      // Creation: Only allowed if user matches auth ID
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      
+      // Update: Only owner or Supervisor of the same team, or HQ
+      allow update: if isSignedIn() && (
+        request.auth.uid == userId ||
+        (isSupervisor() && resource.data.team == getUserProfile().team) ||
+        isHQ()
+      );
     }
 
     // --- Installations Collection ---
     match /installations/{recordId} {
-      // READ: 
-      // Using strict resource.data.createdByUid to match .where('createdByUid', ...) queries.
+      // Read: Own records, Team records, or ALL records if HQ
       allow read: if isSignedIn() && (
-        (resource.data.createdByUid == request.auth.uid) || isSupervisor()
+        resource.data.createdByUid == request.auth.uid ||
+        resource.data.Team == getUserProfile().team ||
+        isHQ()
       );
       
-      // CREATE:
-      // Allow creating if owner OR supervisor (for seeding data for others)
-      allow create: if isSignedIn() && (
-        request.resource.data.createdByUid == request.auth.uid || isSupervisor()
-      );
+      allow create: if isSignedIn();
       
-      // UPDATE/DELETE:
-      allow update: if isSignedIn() && (
-        (resource.data.createdByUid == request.auth.uid) || isSupervisor()
-      );
-      allow delete: if isSignedIn() && (
-        (resource.data.createdByUid == request.auth.uid) || isSupervisor()
+      // Edit/Delete: Own, Team Supervisor, or HQ
+      allow update, delete: if isSignedIn() && (
+        resource.data.createdByUid == request.auth.uid ||
+        resource.data.Team == getUserProfile().team ||
+        isHQ()
       );
     }
 
@@ -58,28 +66,29 @@ service cloud.firestore {
 
     // --- Announcements Collection ---
     match /announcements/{announceId} {
+      // Relaxed Read: Authenticated users can read announcements
       allow read: if isSignedIn();
-      allow write: if isSupervisor();
+      
+      allow write: if isSupervisor() && (
+         request.resource.data.team == getUserProfile().team || 
+         resource.data.team == getUserProfile().team ||
+         isHQ()
+      );
     }
 
     // --- Direct Messages Collection ---
     match /messages/{msgId} {
-      // Allow creation if the sender is the current user (DSR reply) OR if user is supervisor
-      allow create: if isSignedIn() && (
-        request.resource.data.senderUid == request.auth.uid || isSupervisor()
-      );
-      
-      // Allow read if user is sender OR recipient OR supervisor
+      // Sender or Recipient can read
       allow read: if isSignedIn() && (
         resource.data.recipientUid == request.auth.uid || 
-        resource.data.senderUid == request.auth.uid || 
-        isSupervisor()
+        resource.data.senderUid == request.auth.uid
       );
       
-      // Allow update (marking as read) if recipient
-      allow update: if isSignedIn() && (
-        resource.data.recipientUid == request.auth.uid || isSupervisor()
-      );
+      // Anyone can send a message
+      allow create: if isSignedIn() && request.resource.data.senderUid == request.auth.uid;
+      
+      // Recipient can update (e.g. to mark as read)
+      allow update: if isSignedIn() && resource.data.recipientUid == request.auth.uid;
     }
   }
 }

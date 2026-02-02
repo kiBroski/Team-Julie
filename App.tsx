@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { ViewState, InstallationRecord, Note, UserProfile } from './types';
 import Dashboard from './components/Dashboard';
@@ -5,7 +6,7 @@ import FiberForm from './components/FiberForm';
 import LoginView from './components/LoginView';
 import SupervisorDashboard from './components/SupervisorDashboard';
 import { generateId, exportToCSV, generateWhatsAppLink } from './services/utils';
-import { LayoutDashboard, StickyNote, Plus, Trash2, Calendar, LogOut, Settings, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, StickyNote, Plus, Trash2, Calendar, LogOut, Settings, AlertTriangle, ChevronLeft } from 'lucide-react';
 
 // Firebase imports
 import { auth, db, isFirebaseSetup } from './firebase';
@@ -80,6 +81,27 @@ const App: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [newNoteText, setNewNoteText] = useState('');
 
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
+
   // 1. Auth Listener
   useEffect(() => {
     if (!isFirebaseSetup) {
@@ -94,26 +116,25 @@ const App: React.FC = () => {
         try {
           const profileDoc = await db.collection('users').doc(currentUser.uid).get();
           if (profileDoc.exists) {
-            const data = profileDoc.data() as any;
-            // Backfill role for legacy users
-            const profile: UserProfile = { ...data, role: data.role || 'dsr' };
+            const data = profileDoc.data() as UserProfile;
+            // Backfill role if missing
+            if (!data.role) data.role = 'dsr';
             
-            setUserProfile(profile);
-
-            // Determine View based on Role
-            if (profile.role === 'supervisor') {
-              setView(ViewState.SupervisorMode);
+            setUserProfile(data);
+            
+            // Default View Routing
+            if (data.role === 'supervisor') {
+                setView(ViewState.SupervisorMode);
             } else {
-              setView(ViewState.Dashboard);
+                setView(ViewState.Dashboard);
             }
-
           } else {
-            // Profile incomplete
-            setView(ViewState.Login); 
+            // Logged in but no profile (Registration flow handles creation, this is fallback)
+            setView(ViewState.Login);
           }
-        } catch (e: any) {
-          console.error("Error fetching profile:", e);
-          if (e.code === 'permission-denied') {
+        } catch (error: any) {
+          console.error("Profile fetch error:", error);
+          if (error.code === 'permission-denied') {
             setPermissionError(true);
           }
         }
@@ -123,63 +144,52 @@ const App: React.FC = () => {
       }
       setAuthLoading(false);
     });
-    return unsubscribe;
+
+    return () => unsubscribe();
   }, []);
 
-  // 2. Real-time Data Listeners (Only when logged in AND NOT SUPERVISOR)
-  // Supervisors fetch their own global data inside their component
+  // 2. Data Listeners (Only when in Field Mode Dashboard)
   useEffect(() => {
-    if (!user || !isFirebaseSetup || (userProfile?.role === 'supervisor')) {
-      if (userProfile?.role !== 'supervisor') {
-        setRecords([]);
-        setNotes([]);
-      }
-      return;
-    }
+    if (!user || view === ViewState.Login || view === ViewState.SupervisorMode || permissionError) return;
 
-    // A. Listen to Installations (My Own Only)
-    // Note: We removed .orderBy('updatedAt') to avoid needing a Firestore Composite Index.
-    // We sort client-side instead.
-    const qRecords = db.collection('installations')
-      .where('createdByUid', '==', user.uid);
+    // Installations Listener
+    // REMOVED .orderBy('updatedAt', 'desc') to fix Missing Index Error
+    const unsubInstallations = db.collection('installations')
+      .where('createdByUid', '==', user.uid)
+      .onSnapshot((snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as InstallationRecord[];
+        
+        // Sort client-side
+        data.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        setRecords(data);
+      }, (error) => {
+        console.error("Installations listener error:", error);
+        if (error.code === 'permission-denied') setPermissionError(true);
+      });
 
-    const unsubRecords = qRecords.onSnapshot((snapshot) => {
-      const loaded: InstallationRecord[] = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as InstallationRecord));
-      
-      // Client-side sort: Newest first
-      loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-      setRecords(loaded);
-    }, (error: any) => {
-      console.error("Error fetching records:", error);
-      if (error.code === 'permission-denied') {
-        setPermissionError(true);
-      }
-    });
-
-    // B. Listen to Notes (Only my notes)
-    const qNotes = db.collection('notes').where('createdByUid', '==', user.uid);
-    const unsubNotes = qNotes.onSnapshot((snapshot) => {
-      const loaded: Note[] = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Note)).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setNotes(loaded);
-    }, (error: any) => {
-      if (error.code === 'permission-denied') {
-        setPermissionError(true);
-      }
-    });
+    // Notes Listener
+    // REMOVED .orderBy('createdAt', 'desc') to fix Missing Index Error
+    const unsubNotes = db.collection('notes')
+      .where('createdByUid', '==', user.uid)
+      .onSnapshot((snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Note));
+        // Sort client-side
+        data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setNotes(data);
+      }, (error) => {
+        console.error("Notes listener error:", error);
+      });
 
     return () => {
-      unsubRecords();
+      unsubInstallations();
       unsubNotes();
     };
-  }, [user, userProfile]);
+  }, [user, view, permissionError]);
 
+  // Actions
   const handleLoginSuccess = (profile: UserProfile) => {
     setUserProfile(profile);
     if (profile.role === 'supervisor') {
@@ -189,239 +199,216 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    auth.signOut();
+  const handleLogout = async () => {
+    await auth.signOut();
     setView(ViewState.Login);
-    setPermissionError(false);
+    setUserProfile(null);
   };
 
   const handleSaveRecord = async (data: Partial<InstallationRecord>, method: 'save' | 'whatsapp') => {
-    if (!user) return;
-    const now = new Date().toISOString();
+    if (!user || !userProfile) return;
 
     try {
-      let finalRecord: InstallationRecord;
+      const now = new Date().toISOString();
+      const payload = {
+        ...data,
+        updatedAt: now,
+        synced: true, // Online save is synced
+        edited: !!data.id,
+        // Ensure these fields are always present
+        DSR: userProfile.displayName,
+        DSRContacts: userProfile.phoneNumber,
+        Team: userProfile.team,
+        createdByUid: user.uid
+      };
 
-      if (editingRecord) {
-        // UPDATE existing in Firestore
-        const updateData = {
-          ...data,
-          edited: true,
-          synced: true, 
-          updatedAt: now,
-        };
-        await db.collection('installations').doc(editingRecord.id).update(updateData);
-        finalRecord = { ...editingRecord, ...updateData } as InstallationRecord;
+      if (data.id) {
+        await db.collection('installations').doc(data.id).update(payload);
       } else {
-        // CREATE new in Firestore
-        const newRecordData = {
-          ...data,
-          createdByUid: user.uid,
-          createdAt: now,
-          updatedAt: now,
-          synced: true,
-          edited: false,
-          source: 'manual',
-        };
-        const docRef = await db.collection('installations').add(newRecordData);
-        finalRecord = { id: docRef.id, ...newRecordData } as InstallationRecord;
+        const newRef = db.collection('installations').doc();
+        await newRef.set({ ...payload, id: newRef.id, createdAt: now });
+        // Update payload with ID for WhatsApp
+        payload.id = newRef.id;
+        // @ts-ignore
+        payload.createdAt = now;
       }
 
-      setEditingRecord(null);
-      
       if (method === 'whatsapp') {
-        generateWhatsAppLink(finalRecord);
+        generateWhatsAppLink(payload as InstallationRecord);
       }
-      setView(ViewState.Dashboard);
 
-    } catch (e) {
-      console.error("Error saving record: ", e);
-      alert("Error saving to database. Check internet connection.");
+      setView(ViewState.Dashboard);
+      setEditingRecord(null);
+    } catch (error: any) {
+      console.error("Save error:", error);
+      alert("Failed to save: " + error.message);
     }
   };
 
   const handleDelete = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this record?')) {
-      try {
-        await db.collection('installations').doc(id).delete();
-      } catch (e) {
-        console.error("Error deleting", e);
-        alert("Could not delete record.");
-      }
+      await db.collection('installations').doc(id).delete();
     }
   };
 
-  const handleEdit = (r: InstallationRecord) => {
-    setEditingRecord(r);
-    setView(ViewState.Form);
-  };
-
-  // Note Handlers
   const handleAddNote = async () => {
     if (!newNoteText.trim() || !user) return;
-    try {
-      await db.collection('notes').add({
-        content: newNoteText,
-        createdAt: new Date().toISOString(),
-        createdByUid: user.uid
-      });
-      setNewNoteText('');
-    } catch (e) {
-      console.error("Error adding note", e);
-    }
+    await db.collection('notes').add({
+      content: newNoteText,
+      createdAt: new Date().toISOString(),
+      createdByUid: user.uid
+    });
+    setNewNoteText('');
   };
 
   const handleDeleteNote = async (id: string) => {
-    if (window.confirm('Delete this note?')) {
-      try {
-        await db.collection('notes').doc(id).delete();
-      } catch (e) {
-        console.error("Error deleting note", e);
-      }
-    }
+    await db.collection('notes').doc(id).delete();
   };
 
-  if (!isFirebaseSetup) {
-    return <SetupGuide />;
-  }
+  // ------------------------------------------------------------------
+  // RENDER
+  // ------------------------------------------------------------------
 
-  if (permissionError) {
-    return <PermissionError />;
-  }
+  if (!isFirebaseSetup) return <SetupGuide />;
+  if (permissionError) return <PermissionError />;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">Loading...</div>;
 
-  if (authLoading) {
-    return <div className="h-screen flex items-center justify-center text-indigo-600 font-bold">Loading FiberTrack...</div>;
-  }
-
-  // ROUTING VIEW
   if (view === ViewState.Login) {
-    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <LoginView 
+        onLoginSuccess={handleLoginSuccess} 
+        installPrompt={deferredPrompt} 
+        onInstall={handleInstallClick}
+      />
+    );
   }
 
   if (view === ViewState.SupervisorMode && userProfile) {
-    return <SupervisorDashboard currentUser={userProfile} onLogout={handleLogout} />;
+    return (
+      <SupervisorDashboard 
+        currentUser={userProfile} 
+        onLogout={handleLogout} 
+        onSwitchToField={() => setView(ViewState.Dashboard)}
+      />
+    );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center">
+    <div className="min-h-screen bg-slate-100 flex flex-col max-w-md mx-auto shadow-2xl overflow-hidden min-w-0">
       {/* Header */}
-      <nav className="w-full bg-white border-b border-gray-200 sticky top-0 z-20">
-        <div className="max-w-2xl mx-auto px-4">
-          <div className="flex justify-between h-14 items-center">
-             <div className="flex flex-col">
-               <span className="font-bold text-indigo-600 text-lg leading-none">FiberTrack</span>
-               <span className="text-[10px] text-gray-500">
-                 {userProfile?.displayName} | {userProfile?.team}
-               </span>
-             </div>
-             <div className="flex gap-1 items-center">
-                <NavBtn active={view === ViewState.Form} onClick={() => { setEditingRecord(null); setView(ViewState.Form); }}>Form</NavBtn>
-                <NavBtn active={view === ViewState.Dashboard} onClick={() => setView(ViewState.Dashboard)}>Dash</NavBtn>
-                <NavBtn active={view === ViewState.Notes} onClick={() => setView(ViewState.Notes)}>Notes</NavBtn>
-                <button onClick={handleLogout} className="ml-2 p-2 text-gray-400 hover:text-red-500"><LogOut size={16}/></button>
-             </div>
+      <header className="bg-indigo-600 text-white p-4 shadow-lg sticky top-0 z-10">
+        <div className="flex justify-between items-center mb-2">
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <LayoutDashboard /> FiberTrack
+          </h1>
+          <div className="flex gap-2">
+            {userProfile?.role === 'supervisor' && (
+              <button 
+                onClick={() => setView(ViewState.SupervisorMode)} 
+                className="p-2 bg-indigo-500 rounded-lg hover:bg-indigo-400 text-xs font-bold"
+              >
+                Super Admin
+              </button>
+            )}
+            <button onClick={handleLogout} className="p-2 bg-indigo-500 rounded-lg hover:bg-indigo-400">
+              <LogOut size={18} />
+            </button>
           </div>
         </div>
-      </nav>
+        <div className="flex gap-1 bg-indigo-700/50 p-1 rounded-xl">
+           <TabButton 
+             active={view === ViewState.Dashboard} 
+             onClick={() => setView(ViewState.Dashboard)} 
+             icon={<LayoutDashboard size={18} />} 
+             label="Jobs" 
+           />
+           <TabButton 
+             active={view === ViewState.Form && !editingRecord} 
+             onClick={() => { setEditingRecord(null); setView(ViewState.Form); }} 
+             icon={<Plus size={18} />} 
+             label="New" 
+           />
+           <TabButton 
+             active={view === ViewState.Notes} 
+             onClick={() => setView(ViewState.Notes)} 
+             icon={<StickyNote size={18} />} 
+             label="Notes" 
+           />
+        </div>
+      </header>
 
-      {/* Main Content */}
-      <main className="flex-1 w-full max-w-2xl p-4">
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-y-auto bg-slate-50 relative">
         {view === ViewState.Dashboard && (
-          <Dashboard 
-            records={records} 
-            currentUser={userProfile}
-            onEdit={handleEdit} 
-            onDelete={handleDelete}
-            onExport={() => exportToCSV(records)}
-            onSync={() => alert('Data is automatically synced with Firebase Cloud.')}
-            onNew={() => { setEditingRecord(null); setView(ViewState.Form); }}
-          />
+          <div className="p-4">
+            <Dashboard 
+              records={records}
+              currentUser={userProfile}
+              onEdit={(r) => { setEditingRecord(r); setView(ViewState.Form); }}
+              onDelete={handleDelete}
+              onSync={() => window.location.reload()}
+              onExport={() => exportToCSV(records)}
+              onNew={() => { setEditingRecord(null); setView(ViewState.Form); }}
+            />
+          </div>
         )}
 
         {view === ViewState.Form && (
-          <FiberForm 
-            initialData={editingRecord} 
-            onSave={handleSaveRecord}
-            onCancel={() => { setEditingRecord(null); setView(ViewState.Dashboard); }}
-            userProfile={userProfile}
-          />
+          <div className="p-4">
+             <button onClick={() => setView(ViewState.Dashboard)} className="mb-4 text-indigo-600 flex items-center gap-1 font-medium">
+               <ChevronLeft size={18} /> Back to Dashboard
+             </button>
+             <FiberForm 
+               initialData={editingRecord}
+               userProfile={userProfile}
+               onSave={handleSaveRecord}
+               onCancel={() => setView(ViewState.Dashboard)}
+             />
+          </div>
         )}
 
         {view === ViewState.Notes && (
-          <div className="space-y-6 pb-20">
-            {/* New Note Input */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-              <h2 className="text-xl font-bold mb-3 flex items-center gap-2 text-gray-800">
-                <StickyNote className="text-indigo-600" /> My Field Notes
-              </h2>
-              <textarea 
-                className="w-full p-3 border border-gray-300 rounded-lg text-sm mb-2 h-24 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                placeholder="Type a new note here..."
+          <div className="p-4 space-y-4 pb-20">
+            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <StickyNote className="text-yellow-500" /> My Notes
+            </h2>
+            
+            <div className="flex gap-2">
+              <input 
+                className="flex-1 p-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="Quick note..."
                 value={newNoteText}
-                onChange={(e) => setNewNoteText(e.target.value)}
+                onChange={e => setNewNoteText(e.target.value)}
               />
-              <button 
-                onClick={handleAddNote}
-                disabled={!newNoteText.trim()}
-                className="w-full bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-              >
-                Add Cloud Note
-              </button>
+              <button onClick={handleAddNote} className="bg-indigo-600 text-white px-4 rounded-lg font-bold">Add</button>
             </div>
 
-            {/* Notes List */}
-            <div className="grid grid-cols-1 gap-4">
+            <div className="space-y-3">
               {notes.map(note => (
-                <div key={note.id} className="bg-yellow-50 p-4 rounded-xl shadow-sm border border-yellow-200 relative group">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-xs font-bold text-yellow-700 flex items-center gap-1">
-                      <Calendar size={12} /> {new Date(note.createdAt).toLocaleDateString()} at {new Date(note.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                    </span>
-                    <button 
-                      onClick={() => handleDeleteNote(note.id)}
-                      className="text-yellow-600 hover:text-red-600 p-1 rounded transition-colors"
-                      title="Delete Note"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                <div key={note.id} className="bg-yellow-50 p-4 rounded-xl shadow-sm border border-yellow-100 relative group">
+                  <p className="text-gray-800 whitespace-pre-wrap">{note.content}</p>
+                  <div className="mt-2 text-xs text-gray-400 flex justify-between items-center">
+                    <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(note.createdAt).toLocaleDateString()}</span>
+                    <button onClick={() => handleDeleteNote(note.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
                   </div>
-                  <p className="text-gray-800 whitespace-pre-wrap text-sm leading-relaxed font-medium">
-                    {note.content}
-                  </p>
                 </div>
               ))}
-              
-              {notes.length === 0 && (
-                <div className="text-center py-10 text-gray-400">
-                  <p>No notes found in cloud.</p>
-                </div>
-              )}
+              {notes.length === 0 && <div className="text-center text-gray-400 py-10">No notes yet.</div>}
             </div>
           </div>
         )}
       </main>
 
-      {/* FAB (Only on Dashboard) */}
-      {view === ViewState.Dashboard && (
-        <button 
-          onClick={() => { setEditingRecord(null); setView(ViewState.Form); }}
-          className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-xl flex items-center justify-center hover:bg-indigo-700 z-30"
-        >
-          <Plus size={28} />
-        </button>
-      )}
     </div>
   );
 };
 
-const NavBtn = ({ active, children, onClick }: { active: boolean, children?: React.ReactNode, onClick: () => void }) => (
+const TabButton = ({ active, onClick, icon, label }: any) => (
   <button 
     onClick={onClick}
-    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-      active ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'text-gray-600 hover:bg-gray-50'
-    }`}
+    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg transition text-sm font-medium ${active ? 'bg-white text-indigo-600 shadow-sm' : 'text-indigo-200 hover:bg-indigo-600'}`}
   >
-    {children}
+    {icon} {label}
   </button>
 );
 

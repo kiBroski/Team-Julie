@@ -34,3 +34,6 @@ if (!firebase.apps.length) {
 
 export const auth = firebase.auth();
 export const db = firebase.firestore();
+
+// Note: Offline Persistence is disabled. 
+// Do not call enablePersistence() to avoid legacy cache warnings and login delays.

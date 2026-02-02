@@ -1,19 +1,20 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { db } from '../firebase';
 import { InstallationRecord, UserProfile, Announcement, DirectMessage } from '../types';
 import { exportToCSV } from '../services/utils';
-import { seedDatabase } from '../services/seeder';
-import { Users, BarChart3, FileSpreadsheet, Send, Search, Download, Calendar, LogOut, CheckCircle, Clock, XCircle, Megaphone, MessageCircle, X, Database, Bell, Inbox } from 'lucide-react';
+import { Users, BarChart3, FileSpreadsheet, Send, Download, LogOut, CheckCircle, Clock, XCircle, Megaphone, MessageCircle, X, Bell, Inbox, Layout } from 'lucide-react';
 
 interface SupervisorDashboardProps {
   currentUser: UserProfile;
   onLogout: () => void;
+  onSwitchToField: () => void;
 }
 
 type TimeRange = 'today' | 'week' | 'month' | 'all';
 type Tab = 'overview' | 'data' | 'team' | 'communicate';
 
-const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, onLogout }) => {
+const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, onLogout, onSwitchToField }) => {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [records, setRecords] = useState<InstallationRecord[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -28,39 +29,58 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
   const [messageTarget, setMessageTarget] = useState<UserProfile | null>(null);
   const [messageText, setMessageText] = useState('');
   
-  // Seeding State
-  const [isSeeding, setIsSeeding] = useState(false);
+  const isHQ = currentUser.team === 'HQ';
 
   useEffect(() => {
-    // 1. Fetch All Installations
-    const unsubRecords = db.collection('installations')
-      .orderBy('updatedAt', 'desc')
-      .onSnapshot(snap => {
-        setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as InstallationRecord)));
-      });
+    // 1. Fetch Installations
+    let queryRecords = db.collection('installations');
+    
+    // If NOT HQ, filter by team. If HQ, fetch ALL.
+    if (!isHQ) {
+        queryRecords = queryRecords.where('Team', '==', currentUser.team);
+    }
 
-    // 2. Fetch All Users (DSRs)
-    const unsubUsers = db.collection('users').where('role', '==', 'dsr')
-      .onSnapshot(snap => {
+    const unsubRecords = queryRecords.onSnapshot(snap => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as InstallationRecord));
+        // Client-side sort
+        data.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        setRecords(data);
+    }, err => console.error("Records error:", err));
+
+    // 2. Fetch Users (DSRs)
+    let queryUsers = db.collection('users').where('role', '==', 'dsr');
+    
+    // If NOT HQ, filter by team
+    if (!isHQ) {
+        queryUsers = queryUsers.where('team', '==', currentUser.team);
+    }
+
+    const unsubUsers = queryUsers.onSnapshot(snap => {
         setUsers(snap.docs.map(d => d.data() as UserProfile));
-      });
+    }, err => console.error("Users error:", err));
       
     // 3. Fetch Announcements
-    const unsubAnnounce = db.collection('announcements').orderBy('createdAt', 'desc')
-      .onSnapshot(snap => {
-        setAnnouncements(snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement)));
-      });
+    let queryAnnounce = db.collection('announcements');
+    if (!isHQ) {
+        queryAnnounce = queryAnnounce.where('team', '==', currentUser.team);
+    }
+
+    const unsubAnnounce = queryAnnounce.onSnapshot(snap => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement));
+        data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setAnnouncements(data);
+    }, err => console.error("Announcements error:", err));
       
-    // 4. Fetch Incoming Messages
+    // 4. Fetch Incoming Messages (Always specific to the logged in user)
     const unsubMessages = db.collection('messages')
       .where('recipientUid', '==', currentUser.uid)
       .where('read', '==', false)
       .onSnapshot(snap => {
         setIncomingMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as DirectMessage)));
-      });
+      }, err => console.error("Messages error:", err));
 
     return () => { unsubRecords(); unsubUsers(); unsubAnnounce(); unsubMessages(); };
-  }, [currentUser]);
+  }, [currentUser, isHQ]);
 
   const getFilteredRecords = () => {
     const now = new Date();
@@ -90,13 +110,18 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
 
   const handlePostAnnouncement = async () => {
     if(!newAnnouncement.title || !newAnnouncement.content) return;
-    await db.collection('announcements').add({
-      ...newAnnouncement,
-      createdAt: new Date().toISOString(),
-      createdBy: currentUser.displayName
-    });
-    setNewAnnouncement({ title: '', content: '' });
-    alert('Announcement Posted!');
+    try {
+      await db.collection('announcements').add({
+        ...newAnnouncement,
+        team: currentUser.team, // Bind to team
+        createdAt: new Date().toISOString(),
+        createdBy: currentUser.displayName
+      });
+      setNewAnnouncement({ title: '', content: '' });
+      alert('Announcement Posted!');
+    } catch (e: any) {
+      alert("Error posting: " + e.message);
+    }
   };
 
   const handleSendMessage = async () => {
@@ -124,28 +149,12 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
   };
   
   const handleReplyToMessage = (msg: DirectMessage) => {
-    // Find user profile to reply
     const user = users.find(u => u.uid === msg.senderUid);
     if (user) {
         markMessageRead(msg.id);
         setMessageTarget(user);
     } else {
-        alert("User profile not found, cannot reply.");
-    }
-  };
-
-  const handleSeedData = async () => {
-    if (!window.confirm("⚠️ GENERATE SAMPLE DATA?\n\nThis will add 180 records and 12 mock users to your database. This is for testing only.\n\nNote: You cannot login as these mock users.")) return;
-    
-    setIsSeeding(true);
-    try {
-      const msg = await seedDatabase();
-      alert(msg);
-    } catch (e) {
-      console.error(e);
-      alert("Error seeding data. Check console permissions.");
-    } finally {
-      setIsSeeding(false);
+        alert("User profile not found in your team list.");
     }
   };
 
@@ -160,11 +169,20 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
             </div>
             <div>
               <h1 className="font-bold text-lg leading-none">FiberTrack</h1>
-              <span className="text-xs text-indigo-300 font-mono">SUPERVISOR CONTROL</span>
+              <span className="text-xs text-indigo-300 font-mono uppercase">
+                  {isHQ ? 'GLOBAL HQ ADMIN' : `${currentUser.team} CONTROL`}
+              </span>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
+            <button 
+              onClick={onSwitchToField}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition"
+            >
+              <Layout size={14} /> Enter Field Mode
+            </button>
+
             <div className="text-right hidden sm:block">
               <div className="text-sm font-semibold">{currentUser.displayName}</div>
               <div className="text-xs text-indigo-300">{currentUser.team}</div>
@@ -199,7 +217,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
           </div>
         )}
 
-        {/* Global Inbox Alert (Shows on any tab if there are messages) */}
+        {/* Global Inbox Alert */}
         {incomingMessages.length > 0 && activeTab !== 'communicate' && (
              <div 
                onClick={() => setActiveTab('communicate')}
@@ -207,7 +225,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
              >
                 <div className="flex items-center gap-3">
                   <Bell className="text-yellow-300" /> 
-                  <span className="font-bold">You have {incomingMessages.length} unread message(s) from DSRs.</span>
+                  <span className="font-bold">You have {incomingMessages.length} unread message(s).</span>
                 </div>
                 <span className="text-sm underline">View Inbox</span>
              </div>
@@ -224,7 +242,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
               <KpiCard label="Rejected / Dead" value={stats.rejected} icon={<XCircle />} color="bg-red-500" />
             </div>
 
-            {/* Performance By User Chart (Simple Bar) */}
+            {/* Performance By User Chart */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
               <h3 className="font-bold text-gray-800 mb-4 text-lg">Top Performers ({timeRange})</h3>
               <div className="space-y-3">
@@ -244,6 +262,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
                     </div>
                   );
                 })}
+                {users.length === 0 && <p className="text-gray-400 text-sm">No active DSRs found.</p>}
               </div>
             </div>
           </div>
@@ -267,6 +286,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
                 <thead className="bg-gray-50 text-gray-700 font-semibold border-b">
                   <tr>
                     <th className="p-3">Date</th>
+                    {isHQ && <th className="p-3 bg-indigo-50 text-indigo-900">Team</th>}
                     <th className="p-3">DSR</th>
                     <th className="p-3">Client</th>
                     <th className="p-3">Contact</th>
@@ -278,6 +298,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
                   {filteredRecords.map(r => (
                     <tr key={r.id} className="hover:bg-gray-50">
                       <td className="p-3 whitespace-nowrap text-gray-500">{new Date(r.updatedAt).toLocaleDateString()}</td>
+                      {isHQ && <td className="p-3 font-bold text-indigo-900 bg-indigo-50/50">{r.Team}</td>}
                       <td className="p-3 font-medium text-indigo-700">{r.DSR}</td>
                       <td className="p-3 font-medium">{r.Name}</td>
                       <td className="p-3 text-gray-500">{r.Contact}</td>
@@ -293,7 +314,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
                     </tr>
                   ))}
                   {filteredRecords.length === 0 && (
-                    <tr><td colSpan={6} className="p-8 text-center text-gray-400">No records found for this period.</td></tr>
+                    <tr><td colSpan={isHQ ? 7 : 6} className="p-8 text-center text-gray-400">No records found for this period.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -307,18 +328,9 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
              <div className="col-span-full bg-blue-50 border border-blue-200 p-4 rounded-xl flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-blue-900">Invite DSRs</h3>
-                  <p className="text-sm text-blue-700">DSRs can sign up on the login page. You will see them here once registered.</p>
+                  <p className="text-sm text-blue-700">DSRs can sign up on the login page and select <strong>{currentUser.team}</strong>.</p>
                 </div>
                 <div className="flex gap-2">
-                   {/* SEED DATA BUTTON */}
-                   <button 
-                    onClick={handleSeedData} 
-                    disabled={isSeeding}
-                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-bold shadow-sm"
-                   >
-                     {isSeeding ? 'Generating...' : <><Database size={16}/> Generate Sample Data</>}
-                   </button>
-
                    <div className="bg-white p-2 rounded-lg font-mono text-sm border border-blue-200 flex items-center">
                      DSRs: <strong>{users.length}</strong>
                    </div>
@@ -358,14 +370,13 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
         {/* --- VIEW: COMMUNICATE --- */}
         {activeTab === 'communicate' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
-            
-            {/* INBOX SECTION */}
+            {/* INBOX */}
             <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 md:col-span-1 h-fit">
                <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                 <Inbox size={18} className="text-indigo-600"/> DSR Inbox
+                 <Inbox size={18} className="text-indigo-600"/> Inbox
                </h3>
                <div className="space-y-3">
-                 {incomingMessages.length === 0 && <p className="text-sm text-gray-400 italic">No unread messages from DSRs.</p>}
+                 {incomingMessages.length === 0 && <p className="text-sm text-gray-400 italic">No unread messages.</p>}
                  {incomingMessages.map(msg => (
                     <div key={msg.id} className="bg-indigo-50 p-3 rounded-lg border border-indigo-100 shadow-sm relative group">
                         <div className="flex justify-between items-start">
@@ -406,7 +417,7 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
                  />
                  <textarea 
                     className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none text-sm h-32 resize-none"
-                    placeholder="Message to all DSRs..."
+                    placeholder={isHQ ? "Broadcast to HQ team only..." : "Message to all DSRs..."}
                     value={newAnnouncement.content}
                     onChange={e => setNewAnnouncement({...newAnnouncement, content: e.target.value})}
                  />

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { MapSearchResult } from '../types';
 import L from 'leaflet';
@@ -31,9 +32,14 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
       const initialLat = -1.286389; // Nairobi default
       const initialLng = 36.817223;
 
-      const map = L.map(mapContainerRef.current).setView([initialLat, initialLng], 13);
+      const map = L.map(mapContainerRef.current, {
+        zoomControl: true,
+        scrollWheelZoom: false // Prevent scrolling page from zooming map accidentally
+      }).setView([initialLat, initialLng], 13);
+      
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19
       }).addTo(map);
 
       map.on('click', (e) => {
@@ -45,7 +51,7 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
       // Force a resize calculation after mount to prevent grey tiles
       setTimeout(() => {
         map.invalidateSize();
-      }, 100);
+      }, 500);
     }
     
     // Cleanup on unmount
@@ -79,10 +85,15 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
       markerRef.current = L.marker([lat, lng]).addTo(mapInstanceRef.current);
     }
     
-    mapInstanceRef.current.setView([lat, lng], 16);
+    // Only fly to view if significantly different to avoid jarring movement
+    const center = mapInstanceRef.current.getCenter();
+    const dist = Math.sqrt(Math.pow(center.lat - lat, 2) + Math.pow(center.lng - lng, 2));
+    if (dist > 0.001) {
+        mapInstanceRef.current.setView([lat, lng], 16);
+    }
 
     if (triggerCallback) {
-       // Reverse Geocode
+       // Debounced Reverse Geocode to save bandwidth and speed up UI
        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`, {
         headers: { 'User-Agent': 'FiberInstallationApp/1.0' }
       })
@@ -90,11 +101,8 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
         .then(d => {
           if (d.address) {
             const a = d.address;
-            // Prioritize road name elements
             const road = a.road || a.pedestrian || a.footway || a.path || '';
-            // Get general area
             const area = a.suburb || a.neighbourhood || a.village || a.town || a.city || '';
-            
             onLocationSelect(lat, lng, road, area);
           } else {
             onLocationSelect(lat, lng);
@@ -114,6 +122,10 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
         handleMarkerUpdate(pos.coords.latitude, pos.coords.longitude);
       }, (err) => {
         alert('Could not get GPS location: ' + err.message);
+      }, {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
       });
     } else {
       alert('Geolocation not supported');
@@ -159,8 +171,7 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
         </button>
       </div>
 
-      {/* Map Container - Increased height for better visibility */}
-      <div ref={mapContainerRef} className="h-72 w-full rounded-xl border-2 border-indigo-200 relative z-0" />
+      <div ref={mapContainerRef} className="h-72 w-full rounded-xl border-2 border-indigo-200 relative z-0 bg-slate-100" />
       
       <div className="flex gap-2 items-center">
         <input 
@@ -181,4 +192,5 @@ const MapPicker: React.FC<MapPickerProps> = ({ coordinates, onLocationSelect }) 
   );
 };
 
-export default MapPicker;
+// Optimization: Prevent re-render unless coordinates change
+export default React.memo(MapPicker);

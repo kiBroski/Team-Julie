@@ -29,15 +29,16 @@
   <script type="importmap">
 {
   "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3",
-    "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "leaflet": "https://esm.sh/leaflet@^1.9.4",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "react-window": "https://esm.sh/react-window@^2.2.6",
     "firebase/": "https://esm.sh/firebase@^12.8.0/",
-    "vite-plugin-static-copy": "https://esm.sh/vite-plugin-static-copy@^3.2.0",
-    "leaflet": "https://esm.sh/leaflet@^1.9.4"
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3",
+    "vite-plugin-static-copy": "https://esm.sh/vite-plugin-static-copy@^3.2.0"
   }
 }
 </script>
@@ -51,14 +52,18 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-             // Register SW for PWA capabilities
-             try {
-               navigator.serviceWorker.register('/sw.js')
-                .then(reg => console.log('Service Worker Registered'))
-                .catch(err => console.log('Service Worker Failed', err.message));
-             } catch(e) {
-               console.log('SW registration skipped');
-             }
+             const swUrl = '/sw.js';
+             // Simple registration attempt
+             navigator.serviceWorker.register(swUrl)
+              .then(reg => {
+                 console.log('SW Registered');
+                 // Trigger update check
+                 reg.update();
+              })
+              .catch(err => {
+                // Suppress visual errors for dev environment domain mismatches
+                console.warn('SW Registration failed (likely due to dev environment):', err.message);
+              });
         });
       }
     </script>

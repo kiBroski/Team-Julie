@@ -2,7 +2,11 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { InstallationRecord, JobStatus, Announcement, DirectMessage, UserProfile } from '../types';
 import { db } from '../firebase';
-import { Edit2, Trash2, Search, Download, RefreshCw, Megaphone, Bell, Check, X, Reply, Send, UserCog, Filter } from 'lucide-react';
+import * as ReactWindow from 'react-window';
+import { Edit2, Trash2, Search, Download, RefreshCw, Megaphone, Bell, Check, X, Reply, Send, UserCog, Filter, Trophy } from 'lucide-react';
+
+// Robust import handling: Check named export first, then default export (for CJS compatibility)
+const List = (ReactWindow as any).FixedSizeList || (ReactWindow as any).default?.FixedSizeList;
 
 interface DashboardProps {
   records: InstallationRecord[];
@@ -13,6 +17,47 @@ interface DashboardProps {
   onExport: () => void;
   onNew: () => void;
 }
+
+const getStatusColor = (status: JobStatus) => {
+  switch (status) {
+    case 'Installed': return 'bg-emerald-100 text-emerald-700';
+    case 'Rejected': return 'bg-red-100 text-red-700';
+    case 'Pending': return 'bg-amber-100 text-amber-700';
+    case 'Lead': return 'bg-blue-100 text-blue-700';
+    default: return 'bg-gray-100 text-gray-700';
+  }
+};
+
+// Virtualized Row defined OUTSIDE the component to prevent re-mounting on every render
+const VirtualRow = ({ index, style, data }: any) => {
+  const { records, onEdit, onDelete } = data;
+  const r = records[index];
+  if (!r) return null;
+  
+  return (
+      <div style={style} className="border-b border-gray-100 hover:bg-indigo-50 transition-colors bg-white p-3 flex items-center justify-between group">
+          <div className="flex-1 min-w-0 pr-4">
+              <div className="flex justify-between items-start mb-1">
+                  <h4 className="font-bold text-gray-900 truncate">{r.Name}</h4>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getStatusColor(r.JobStatus)}`}>
+                    {r.JobStatus}
+                  </span>
+              </div>
+              <div className="text-xs text-gray-500 flex flex-wrap gap-2">
+                  <span className="truncate max-w-[150px]">{r.RoadName || 'No Loc'}</span>
+                  <span>•</span>
+                  <span>{r.Contact}</span>
+                  <span>•</span>
+                  <span>{new Date(r.updatedAt).toLocaleDateString()}</span>
+              </div>
+          </div>
+          <div className="flex gap-2">
+              <button onClick={() => onEdit(r)} className="p-2 text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-200"><Edit2 size={16}/></button>
+              <button onClick={() => onDelete(r.id)} className="p-2 text-red-500 bg-red-50 rounded-lg hover:bg-red-200"><Trash2 size={16}/></button>
+          </div>
+      </div>
+  );
+};
 
 const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onDelete, onSync, onExport, onNew }) => {
   const [filter, setFilter] = useState<string>('');
@@ -137,171 +182,97 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [records, filter, statusFilter]);
 
+  // Fallback for when List is undefined (during hot reload or specific bundle states)
+  if (!List) {
+    return <div className="p-4 text-center">Loading list components...</div>;
+  }
+
   return (
-    <div className="space-y-6 pb-20 relative">
+    <div className="space-y-6 pb-20 relative h-[calc(100vh-140px)] flex flex-col">
       
-      {/* Messages & Announcements */}
-      {messages.length > 0 && (
-        <div className="space-y-2">
-          {messages.map(msg => (
-            <div key={msg.id} className="bg-indigo-600 text-white p-4 rounded-xl shadow-lg flex flex-col gap-3 animate-fade-in">
-              <div className="flex justify-between items-start">
-                <div className="flex gap-3">
-                  <Bell size={20} className="text-white mt-1" />
-                  <div>
-                    <h4 className="font-bold text-sm">Message from {msg.senderName || 'Supervisor'}</h4>
-                    <p className="text-indigo-100 text-sm mt-1">{msg.content}</p>
-                  </div>
+      {/* Scrollable Header Section */}
+      <div className="flex-none space-y-6">
+        {/* Messages & Announcements */}
+        {messages.length > 0 && (
+            <div className="space-y-2">
+            {messages.map(msg => (
+                <div key={msg.id} className="bg-indigo-600 text-white p-4 rounded-xl shadow-lg flex flex-col gap-3 animate-fade-in">
+                <div className="flex justify-between items-start">
+                    <div className="flex gap-3">
+                    <Bell size={20} className="text-white mt-1" />
+                    <div>
+                        <h4 className="font-bold text-sm">Message from {msg.senderName || 'Supervisor'}</h4>
+                        <p className="text-indigo-100 text-sm mt-1">{msg.content}</p>
+                    </div>
+                    </div>
+                    <button onClick={() => markMessageRead(msg.id)} className="text-indigo-200 hover:text-white"><X size={16} /></button>
                 </div>
-                <button onClick={() => markMessageRead(msg.id)} className="text-indigo-200 hover:text-white"><X size={16} /></button>
-              </div>
-              <div className="flex justify-end">
-                <button onClick={() => setReplyTarget(msg)} className="bg-white text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
-                  <Reply size={12} /> Reply
-                </button>
-              </div>
+                <div className="flex justify-end">
+                    <button onClick={() => setReplyTarget(msg)} className="bg-white text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
+                    <Reply size={12} /> Reply
+                    </button>
+                </div>
+                </div>
+            ))}
             </div>
-          ))}
-        </div>
-      )}
-
-      {announcements.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 items-start">
-          <Megaphone size={20} className="text-amber-600 mt-1" />
-          <div>
-            <h4 className="font-bold text-amber-900 text-sm">{announcements[0].title}</h4>
-            <p className="text-amber-800 text-sm">{announcements[0].content}</p>
-          </div>
-        </div>
-      )}
-
-      {/* CLICKABLE STATS GRID - Now interactive buttons */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatBox 
-          label="Pending" value={stats.pending} color="bg-amber-500" 
-          active={statusFilter === 'Pending'} onClick={() => setStatusFilter(statusFilter === 'Pending' ? 'All' : 'Pending')} 
-        />
-        <StatBox 
-          label="Lead" value={stats.lead} color="bg-blue-500" 
-          active={statusFilter === 'Lead'} onClick={() => setStatusFilter(statusFilter === 'Lead' ? 'All' : 'Lead')}
-        />
-        <StatBox 
-          label="Installed" value={stats.installed} color="bg-emerald-500" 
-          active={statusFilter === 'Installed'} onClick={() => setStatusFilter(statusFilter === 'Installed' ? 'All' : 'Installed')}
-        />
-        <StatBox 
-          label="Rejected" value={stats.rejected} color="bg-red-500" 
-          active={statusFilter === 'Rejected'} onClick={() => setStatusFilter(statusFilter === 'Rejected' ? 'All' : 'Rejected')}
-        />
-        <StatBox 
-          label="Total All" value={stats.total} color="bg-indigo-600" 
-          active={statusFilter === 'All'} onClick={() => setStatusFilter('All')}
-        />
-      </div>
-
-      {/* Action Bar */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-3 items-center">
-        <div className="relative flex-grow min-w-[200px]">
-          <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-          <input 
-            className="w-full pl-10 p-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-            placeholder="Search records..."
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-          />
-        </div>
-        <button onClick={onNew} className="bg-indigo-600 text-white py-2 px-4 rounded-lg font-bold hover:bg-indigo-700 flex-1 md:flex-none">
-          + New
-        </button>
-        <button onClick={onExport} className="bg-emerald-600 text-white py-2 px-4 rounded-lg font-bold hover:bg-emerald-700 flex-1 md:flex-none flex items-center justify-center gap-2">
-          <Download size={18} /> CSV
-        </button>
-        {supervisor && (
-          <button onClick={() => setIsMessagingSupervisor(true)} className="bg-indigo-50 text-indigo-700 border border-indigo-200 py-2 px-4 rounded-lg font-bold flex-1 md:flex-none flex items-center justify-center gap-2">
-            <UserCog size={18} /> Supervisor
-          </button>
         )}
+
+        {announcements.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 items-start">
+            <Megaphone size={20} className="text-amber-600 mt-1" />
+            <div>
+                <h4 className="font-bold text-amber-900 text-sm">{announcements[0].title}</h4>
+                <p className="text-amber-800 text-sm">{announcements[0].content}</p>
+            </div>
+            </div>
+        )}
+
+        {/* CLICKABLE STATS GRID */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <StatBox label="Pending" value={stats.pending} color="bg-amber-500" active={statusFilter === 'Pending'} onClick={() => setStatusFilter(statusFilter === 'Pending' ? 'All' : 'Pending')} />
+            <StatBox label="Lead" value={stats.lead} color="bg-blue-500" active={statusFilter === 'Lead'} onClick={() => setStatusFilter(statusFilter === 'Lead' ? 'All' : 'Lead')} />
+            <StatBox label="Installed" value={stats.installed} color="bg-emerald-500" active={statusFilter === 'Installed'} onClick={() => setStatusFilter(statusFilter === 'Installed' ? 'All' : 'Installed')} />
+            <StatBox label="Rejected" value={stats.rejected} color="bg-red-500" active={statusFilter === 'Rejected'} onClick={() => setStatusFilter(statusFilter === 'Rejected' ? 'All' : 'Rejected')} />
+            <StatBox label="Total All" value={stats.total} color="bg-indigo-600" active={statusFilter === 'All'} onClick={() => setStatusFilter('All')} />
+        </div>
+
+        {/* Action Bar */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-3 items-center">
+            <div className="relative flex-grow min-w-[150px]">
+            <Search className="absolute left-3 top-3 text-gray-400" size={18} />
+            <input 
+                className="w-full pl-10 p-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="Search..."
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+            />
+            </div>
+            <button onClick={onNew} className="bg-indigo-600 text-white py-2 px-4 rounded-lg font-bold hover:bg-indigo-700 flex-1 md:flex-none">
+            + New
+            </button>
+            <button onClick={onExport} className="bg-emerald-600 text-white py-2 px-4 rounded-lg font-bold hover:bg-emerald-700 flex-1 md:flex-none flex items-center justify-center gap-2">
+            <Download size={18} /> CSV
+            </button>
+            {supervisor && (
+            <button onClick={() => setIsMessagingSupervisor(true)} className="bg-indigo-50 text-indigo-700 border border-indigo-200 py-2 px-4 rounded-lg font-bold flex-1 md:flex-none flex items-center justify-center gap-2">
+                <UserCog size={18} /> Super
+            </button>
+            )}
+        </div>
       </div>
 
-      {/* RESPONSIVE TABLE VIEW - UPDATED COLUMNS */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        {/* Desktop/Tablet Table */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-gray-50 text-gray-700 font-semibold border-b border-gray-200">
-              <tr>
-                <th className="p-3 whitespace-nowrap">Date</th>
-                <th className="p-3 whitespace-nowrap">Name</th>
-                <th className="p-3 whitespace-nowrap">Contact</th>
-                <th className="p-3 whitespace-nowrap">Road/Loc</th>
-                <th className="p-3 whitespace-nowrap">FAT</th>
-                <th className="p-3 whitespace-nowrap">Status</th>
-                <th className="p-3 whitespace-nowrap">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredRecords.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="p-3 text-gray-500 whitespace-nowrap">{new Date(r.updatedAt).toLocaleDateString()}</td>
-                  <td className="p-3 font-medium text-gray-900">{r.Name}</td>
-                  <td className="p-3 text-gray-600">{r.Contact}</td>
-                  <td className="p-3 text-gray-600 max-w-[200px] truncate" title={r.RoadName + ' ' + r.Address}>
-                    {r.RoadName || '-'} {r.Address ? `(${r.Address})` : ''}
-                  </td>
-                  <td className="p-3 text-gray-600">{r.FAT || '-'}</td>
-                  <td className="p-3">
-                     <span className={`px-2 py-1 rounded-full text-xs font-bold ${getStatusColor(r.JobStatus)}`}>
-                       {r.JobStatus}
-                     </span>
-                  </td>
-                  <td className="p-3 flex gap-2">
-                    <button onClick={() => onEdit(r)} className="text-indigo-600 hover:bg-indigo-50 p-1 rounded"><Edit2 size={16}/></button>
-                    <button onClick={() => onDelete(r.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={16}/></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile Card List */}
-        <div className="md:hidden divide-y divide-gray-100">
-          {filteredRecords.map(r => (
-            <div key={r.id} className="p-4 flex flex-col gap-2 relative">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h4 className="font-bold text-gray-900">{r.Name}</h4>
-                  <p className="text-xs text-gray-500">{new Date(r.updatedAt).toDateString()}</p>
-                </div>
-                <span className={`px-2 py-1 rounded-full text-xs font-bold ${getStatusColor(r.JobStatus)}`}>
-                   {r.JobStatus}
-                </span>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-sm text-gray-600 mt-1">
-                <div className="col-span-2 flex items-center gap-1">
-                  <span className="font-semibold text-gray-400 text-xs">LOC:</span> {r.RoadName} {r.Address}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="font-semibold text-gray-400 text-xs">TEL:</span> <a href={`tel:${r.Contact}`} className="text-indigo-600">{r.Contact}</a>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="font-semibold text-gray-400 text-xs">FAT:</span> {r.FAT || 'N/A'}
-                </div>
-              </div>
-
-              {/* Mobile Actions */}
-              <div className="flex gap-3 mt-2 border-t border-gray-50 pt-2">
-                <button onClick={() => onEdit(r)} className="flex-1 py-1.5 text-xs font-bold bg-indigo-50 text-indigo-600 rounded flex items-center justify-center gap-1">
-                  <Edit2 size={14} /> Edit
-                </button>
-                <button onClick={() => onDelete(r.id)} className="flex-1 py-1.5 text-xs font-bold bg-red-50 text-red-600 rounded flex items-center justify-center gap-1">
-                  <Trash2 size={14} /> Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+      {/* VIRTUALIZED LIST VIEW */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1">
+        <List
+            height={500} 
+            itemCount={filteredRecords.length}
+            itemSize={80} // Height of card row
+            width={'100%'}
+            itemData={{ records: filteredRecords, onEdit, onDelete }}
+            className="virtual-list"
+        >
+            {VirtualRow}
+        </List>
         
         {filteredRecords.length === 0 && (
           <div className="p-8 text-center text-gray-400">
@@ -350,15 +321,5 @@ const StatBox = ({ label, value, color, active, onClick }: { label: string, valu
     <div className={`text-[10px] font-bold uppercase tracking-wider ${!active && 'text-gray-400'}`}>{label}</div>
   </button>
 );
-
-const getStatusColor = (status: JobStatus) => {
-  switch (status) {
-    case 'Installed': return 'bg-emerald-100 text-emerald-700';
-    case 'Rejected': return 'bg-red-100 text-red-700';
-    case 'Pending': return 'bg-amber-100 text-amber-700';
-    case 'Lead': return 'bg-blue-100 text-blue-700';
-    default: return 'bg-gray-100 text-gray-700';
-  }
-};
 
 export default Dashboard;

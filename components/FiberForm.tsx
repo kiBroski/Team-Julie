@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
 import { InstallationRecord, JobStatus, FiberReady, UserProfile } from '../types';
 import MapPicker from './MapPicker';
 import { parseWhatsAppMessage, generateWhatsAppLink } from '../services/utils';
-import { Save, Phone, X, Upload } from 'lucide-react';
+import { Save, Phone, X, Upload, ShieldCheck } from 'lucide-react';
 
 interface FiberFormProps {
   initialData?: InstallationRecord | null;
@@ -165,9 +166,28 @@ const FiberForm: React.FC<FiberFormProps> = ({ initialData, onSave, onCancel, us
             <option value="Lead">Lead</option>
           </select>
         </div>
+        
+        {/* Office Use Section */}
+        <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200">
+           <h4 className="text-xs font-bold text-indigo-800 uppercase tracking-wide flex items-center gap-1 mb-2">
+             <ShieldCheck size={14}/> Office / Admin Use
+           </h4>
+           <div className="grid grid-cols-1 gap-4">
+               <div className="relative">
+                 <label className="text-[10px] text-gray-500 font-bold ml-1 uppercase">Account Number</label>
+                 <input 
+                    name="AccountNumber" 
+                    placeholder="Enter Account Number" 
+                    value={formData.AccountNumber} 
+                    onChange={handleChange} 
+                    className="input-field bg-white border-indigo-300 font-mono text-indigo-900 font-bold" 
+                 />
+               </div>
+           </div>
+        </div>
 
-        {/* Extra - Auto Filled and Read Only if from profile */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-3 rounded-lg border border-gray-200">
+        {/* DSR Info - Auto Filled and Read Only if from profile */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-3 rounded-lg border border-gray-200 opacity-75">
            <div className="col-span-2 text-xs font-bold text-gray-500 uppercase tracking-wide">DSR Details (Auto-Filled)</div>
            <input 
              name="DSR" 
@@ -193,7 +213,6 @@ const FiberForm: React.FC<FiberFormProps> = ({ initialData, onSave, onCancel, us
              className="input-field bg-gray-100" 
              readOnly={!!userProfile}
            />
-           <input name="AccountNumber" placeholder="Account Number" value={formData.AccountNumber} onChange={handleChange} className="input-field bg-white" />
         </div>
 
         <textarea name="Comment" placeholder="Comments..." value={formData.Comment} onChange={handleChange} className="input-field h-20" />

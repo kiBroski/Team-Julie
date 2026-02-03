@@ -1,3 +1,4 @@
+
 import { InstallationRecord } from "../types";
 
 export const generateId = (): string => crypto.randomUUID();
@@ -88,21 +89,55 @@ export const parseWhatsAppMessage = (text: string): Partial<InstallationRecord> 
 
 export const exportToCSV = (records: InstallationRecord[]) => {
   if (records.length === 0) return;
-  const headers = Object.keys(records[0]).join(',');
-  const csv = [
-    headers,
-    ...records.map(r => 
-      Object.values(r).map(v => 
-        `"${(v || '').toString().replace(/"/g, '""')}"`
-      ).join(',')
-    )
-  ].join('\n');
+
+  // Specific Column Order requested by User
+  const columns = [
+    { header: 'Date', key: 'updatedAt', fmt: (v: string) => new Date(v).toLocaleDateString() + ' ' + new Date(v).toLocaleTimeString() },
+    { header: 'Title', key: 'Title' },
+    { header: 'Name', key: 'Name' },
+    { header: 'Contact', key: 'Contact' },
+    { header: 'Alt Contact', key: 'AltContact' },
+    { header: 'Email', key: 'Email' },
+    { header: 'Road Name', key: 'RoadName' },
+    { header: 'Coordinates', key: 'coordinates' },
+    { header: 'Address/Apt', key: 'Address' },
+    { header: 'FAT', key: 'FAT' },
+    { header: 'Status', key: 'JobStatus' },
+    { header: 'Agent Name', key: 'DSR' },
+    { header: 'Agent Contact', key: 'DSRContacts' },
+    { header: 'Team', key: 'Team' },
+    { header: 'Comment', key: 'Comment' }
+  ];
+
+  const escapeCsv = (val: any) => {
+    if (val === null || val === undefined) return '';
+    const str = String(val);
+    // Escape quotes and wrap in quotes if it contains comma, quote or newline to prevent "jumbled" Excel rows
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const headerRow = columns.map(c => c.header).join(',');
   
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const rows = records.map(record => {
+    return columns.map(col => {
+      // @ts-ignore
+      let val = record[col.key];
+      if (col.fmt) val = col.fmt(val);
+      return escapeCsv(val);
+    }).join(',');
+  });
+
+  const csvContent = [headerRow, ...rows].join('\n');
+  
+  // Add Byte Order Mark (BOM) for Excel UTF-8 compatibility so special chars display correctly
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `fiber_records_${new Date().toISOString().split('T')[0]}.csv`;
+  link.download = `FiberTrack_Export_${new Date().toISOString().split('T')[0]}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

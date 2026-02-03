@@ -9,6 +9,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
+  "engines": {
+    "node": ">=20 <21"
+  },
   "dependencies": {
     "firebase": "^10.8.0",
     "leaflet": "^1.9.4",

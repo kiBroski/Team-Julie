@@ -4,11 +4,8 @@ import { db } from '../firebase';
 import { InstallationRecord, UserProfile, Announcement, DirectMessage, JobStatus } from '../types';
 import { exportToCSV } from '../services/utils';
 import FiberForm from './FiberForm';
-import * as ReactWindow from 'react-window';
+import { FixedSizeList as List } from 'react-window';
 import { Users, BarChart3, FileSpreadsheet, Send, Download, LogOut, CheckCircle, Clock, XCircle, Megaphone, MessageCircle, X, Bell, Inbox, Layout, ChevronRight, User, Trophy, Medal, Edit, Award } from 'lucide-react';
-
-// Robust import handling: Check named export first, then default export (for CJS compatibility)
-const List = (ReactWindow as any).FixedSizeList || (ReactWindow as any).default?.FixedSizeList;
 
 interface SupervisorDashboardProps {
   currentUser: UserProfile;
@@ -233,11 +230,6 @@ const SupervisorDashboard: React.FC<SupervisorDashboardProps> = ({ currentUser, 
     setStatusFilter(status);
     setActiveTab('data');
   };
-
-  // Fallback
-  if (!List) {
-    return <div className="p-4 text-center">Loading data view...</div>;
-  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col relative">

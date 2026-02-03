@@ -2,11 +2,8 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { InstallationRecord, JobStatus, Announcement, DirectMessage, UserProfile } from '../types';
 import { db } from '../firebase';
-import * as ReactWindow from 'react-window';
+import { FixedSizeList as List } from 'react-window';
 import { Edit2, Trash2, Search, Download, RefreshCw, Megaphone, Bell, Check, X, Reply, Send, UserCog, Filter, Trophy } from 'lucide-react';
-
-// Robust import handling: Check named export first, then default export (for CJS compatibility)
-const List = (ReactWindow as any).FixedSizeList || (ReactWindow as any).default?.FixedSizeList;
 
 interface DashboardProps {
   records: InstallationRecord[];
@@ -181,11 +178,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, currentUser, onEdit, onD
       )
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [records, filter, statusFilter]);
-
-  // Fallback for when List is undefined (during hot reload or specific bundle states)
-  if (!List) {
-    return <div className="p-4 text-center">Loading list components...</div>;
-  }
 
   return (
     <div className="space-y-6 pb-20 relative h-[calc(100vh-140px)] flex flex-col">
